@@ -1,6 +1,5 @@
 """
-F1 Dashboard Backend - FastAPI Server
-Real-time F1 telemetry data aggregation and WebSocket streaming
+F1 Dashboard Backend - FastAPI Server with improved rate limiting
 """
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -52,7 +51,7 @@ async def startup_event():
     logger.info("Starting F1 Dashboard API...")
     await f1_service.initialize()
     
-    # Start background data streaming
+    # Start background data streaming with reduced frequency
     global streaming_task
     streaming_task = asyncio.create_task(data_streaming_loop())
     
@@ -72,10 +71,11 @@ async def shutdown_event():
             pass
     
     await websocket_manager.disconnect_all()
+    await f1_service.close()
     logger.info("F1 Dashboard API shutdown complete")
 
 async def data_streaming_loop():
-    """Background task for streaming live data to WebSocket clients with rate limiting"""
+    """Background task for streaming live data with aggressive rate limiting"""
     while True:
         try:
             if websocket_manager.has_connections():
@@ -84,18 +84,23 @@ async def data_streaming_loop():
                 if session:
                     session_key = session.get('session_key')
                     
-                    # Fetch data with staggered requests to avoid rate limiting
+                    # Check service health before making requests
+                    health = f1_service.get_health_status()
+                    if health['rate_limited']:
+                        logger.info("Service is rate limited, skipping this cycle")
+                        await asyncio.sleep(60)  # Wait longer when rate limited
+                        continue
+                    
+                    if health['consecutive_failures'] > 5:
+                        logger.warning(f"Too many failures ({health['consecutive_failures']}), reducing frequency")
+                        await asyncio.sleep(120)  # Wait 2 minutes after many failures
+                        continue
+                    
                     try:
-                        # Only fetch essential data for streaming
+                        # Only fetch the most essential data with long delays
+                        logger.info("Fetching positions...")
                         positions = await f1_service.get_positions(session_key)
-                        await asyncio.sleep(1)  # Stagger requests
                         
-                        intervals = await f1_service.get_intervals(session_key)
-                        await asyncio.sleep(1)
-                        
-                        locations = await f1_service.get_locations(session_key)
-                        
-                        # Broadcast updates only if we have data
                         if positions:
                             await websocket_manager.broadcast({
                                 "type": "POSITION",
@@ -103,12 +108,24 @@ async def data_streaming_loop():
                                 "timestamp": datetime.utcnow().isoformat()
                             })
                         
+                        # Wait between requests to avoid rate limiting
+                        await asyncio.sleep(2)
+                        
+                        logger.info("Fetching intervals...")
+                        intervals = await f1_service.get_intervals(session_key)
+                        
                         if intervals:
                             await websocket_manager.broadcast({
                                 "type": "INTERVAL",
                                 "data": intervals,
                                 "timestamp": datetime.utcnow().isoformat()
                             })
+                        
+                        # Only fetch locations occasionally to avoid rate limits
+                        await asyncio.sleep(2)
+                        
+                        logger.info("Fetching locations...")
+                        locations = await f1_service.get_locations(session_key)
                         
                         if locations:
                             await websocket_manager.broadcast({
@@ -119,14 +136,17 @@ async def data_streaming_loop():
                     
                     except Exception as api_error:
                         logger.warning(f"API error in streaming loop: {api_error}")
-                        # Continue the loop even if API calls fail
+                        # Don't continue immediately, wait longer on errors
+                        await asyncio.sleep(30)
+                        continue
             
-            # Increased wait time to reduce API pressure
-            await asyncio.sleep(10)  # 10-second intervals instead of 3
+            # Much longer wait time to reduce API pressure - 30 seconds between cycles
+            logger.info("Waiting 30 seconds before next data fetch...")
+            await asyncio.sleep(30)
             
         except Exception as e:
             logger.error(f"Error in data streaming loop: {e}")
-            await asyncio.sleep(15)  # Wait longer on error
+            await asyncio.sleep(60)  # Wait longer on error
 
 # WebSocket endpoint
 @app.websocket("/ws")
@@ -147,12 +167,19 @@ async def websocket_endpoint(websocket: WebSocket, session_key: Optional[str] = 
                 "data": session,
                 "timestamp": datetime.utcnow().isoformat()
             })
+        else:
+            # Send a message indicating no session is available
+            await websocket.send_json({
+                "type": "NO_SESSION",
+                "data": {"message": "No active F1 session available"},
+                "timestamp": datetime.utcnow().isoformat()
+            })
         
         # Keep connection alive and handle messages
         while True:
             try:
-                # Wait for client messages
-                data = await websocket.receive_text()
+                # Wait for client messages with a timeout
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
                 message = json.loads(data)
                 
                 # Handle subscription requests
@@ -160,7 +187,19 @@ async def websocket_endpoint(websocket: WebSocket, session_key: Optional[str] = 
                     logger.info(f"Client subscribed to: {message.get('data', {}).get('dataTypes', [])}")
                 elif message.get("type") == "UNSUBSCRIBE":
                     logger.info(f"Client unsubscribed from: {message.get('data', {}).get('dataTypes', [])}")
+                elif message.get("type") == "PING":
+                    # Respond to ping
+                    await websocket.send_json({
+                        "type": "PONG",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
                 
+            except asyncio.TimeoutError:
+                # Send heartbeat
+                await websocket.send_json({
+                    "type": "HEARTBEAT",
+                    "timestamp": datetime.utcnow().isoformat()
+                })
             except WebSocketDisconnect:
                 break
             except Exception as e:
@@ -176,10 +215,12 @@ async def websocket_endpoint(websocket: WebSocket, session_key: Optional[str] = 
 @app.get("/")
 async def root():
     """API health check"""
+    health = f1_service.get_health_status()
     return {
         "message": "F1 Dashboard API",
         "version": "1.0.0",
         "status": "running",
+        "health": health,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -194,21 +235,29 @@ async def health_check():
         api_status = "unhealthy"
         logger.error(f"Health check failed: {e}")
     
+    service_health = f1_service.get_health_status()
+    
     return {
         "status": "healthy",
         "api_connection": api_status,
         "websocket_connections": websocket_manager.connection_count(),
+        "service_health": service_health,
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.get("/api/sessions/current", response_model=SessionResponse)
+@app.get("/api/sessions/current")
 async def get_current_session():
     """Get current F1 session information"""
     try:
         session = await f1_service.get_current_session()
         if not session:
-            raise HTTPException(status_code=404, detail="No current session found")
-        return SessionResponse(**session)
+            # Instead of 404, return a message about no current session
+            return {
+                "message": "No current F1 session available",
+                "session": None,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        return session
     except Exception as e:
         logger.error(f"Error getting current session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
