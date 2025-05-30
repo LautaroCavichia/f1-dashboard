@@ -1,0 +1,343 @@
+/* LiveTiming.css - Live timing table styles */
+
+.live-timing {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, 0.3);
+  }
+  
+  .timing-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background: rgba(0, 0, 0, 0.6);
+    border-bottom: 2px solid rgba(255, 0, 0, 0.3);
+  }
+  
+  .timing-header h2 {
+    margin: 0;
+    font-size: 1.3rem;
+    color: #ffffff;
+    font-weight: 700;
+  }
+  
+  .timing-status {
+    display: flex;
+    align-items: center;
+  }
+  
+  .status-badge {
+    padding: 0.3rem 0.8rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  .status-badge.live {
+    background: linear-gradient(45deg, #00ff00, #00cc00);
+    color: #000000;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+    animation: pulse-live 2s infinite;
+  }
+  
+  .status-badge.offline {
+    background: rgba(255, 107, 107, 0.2);
+    color: #ff6b6b;
+    border: 1px solid rgba(255, 107, 107, 0.3);
+  }
+  
+  .timing-table {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .timing-header-row {
+    display: grid;
+    grid-template-columns: 60px 200px 100px 80px 80px 80px 80px 80px 80px;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #cccccc;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  .timing-rows {
+    flex: 1;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 0, 0, 0.3) rgba(0, 0, 0, 0.1);
+  }
+  
+  .timing-rows::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .timing-rows::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+  }
+  
+  .timing-rows::-webkit-scrollbar-thumb {
+    background: rgba(255, 0, 0, 0.3);
+    border-radius: 3px;
+  }
+  
+  .timing-row {
+    display: grid;
+    grid-template-columns: 60px 200px 100px 80px 80px 80px 80px 80px 80px;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+  }
+  
+  .timing-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  
+  .timing-row.selected {
+    box-shadow: inset 0 0 0 2px rgba(255, 0, 0, 0.5);
+  }
+  
+  /* Column Styles */
+  .col-pos {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .position {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #ffffff;
+  }
+  
+  .col-driver {
+    display: flex;
+    align-items: center;
+  }
+  
+  .driver-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+  }
+  
+  .driver-number {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+  
+  .driver-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  
+  .driver-name {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #ffffff;
+  }
+  
+  .team-name {
+    font-size: 0.7rem;
+    color: #888888;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  
+  .col-time,
+  .col-sector,
+  .col-gap,
+  .col-interval {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .lap-time {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #ffffff;
+  }
+  
+  .sector-time {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #cccccc;
+  }
+  
+  .gap-time,
+  .interval-time {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #cccccc;
+  }
+  
+  .col-tyre {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .tyre-info {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  
+  .tyre-compound {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #000000;
+    text-shadow: none;
+  }
+  
+  .tyre-age {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #cccccc;
+  }
+  
+  /* No Data State */
+  .no-data {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #888888;
+    padding: 2rem;
+  }
+  
+  .no-data p {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+    color: #cccccc;
+  }
+  
+  .no-data span {
+    font-size: 0.9rem;
+    color: #888888;
+  }
+  
+  /* Animations */
+  @keyframes pulse-live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+  
+  /* Responsive Design */
+  @media (max-width: 1200px) {
+    .timing-header-row,
+    .timing-row {
+      grid-template-columns: 50px 180px 90px 70px 70px 70px 70px 70px 70px;
+      font-size: 0.85rem;
+    }
+  
+    .team-name {
+      display: none;
+    }
+  }
+  
+  @media (max-width: 968px) {
+    .timing-header-row,
+    .timing-row {
+      grid-template-columns: 45px 150px 80px 60px 60px 60px 60px 60px;
+      gap: 0.3rem;
+    }
+  
+    .col-interval {
+      display: none;
+    }
+  
+    .timing-header-row .col-interval {
+      display: none;
+    }
+  }
+  
+  @media (max-width: 768px) {
+    .timing-header {
+      padding: 1rem;
+    }
+  
+    .timing-header h2 {
+      font-size: 1.1rem;
+    }
+  
+    .timing-header-row,
+    .timing-row {
+      grid-template-columns: 40px 120px 70px 50px 50px 50px 50px;
+      padding: 0.6rem 0.8rem;
+      font-size: 0.8rem;
+    }
+  
+    .col-sector:nth-child(6) {
+      display: none;
+    }
+  
+    .timing-header-row .col-sector:nth-child(6) {
+      display: none;
+    }
+  
+    .driver-number {
+      width: 24px;
+      height: 24px;
+      font-size: 0.7rem;
+    }
+  
+    .driver-name {
+      font-size: 0.85rem;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .timing-header-row,
+    .timing-row {
+      grid-template-columns: 35px 100px 65px 45px 45px 45px;
+      gap: 0.2rem;
+    }
+  
+    .col-sector:nth-child(5) {
+      display: none;
+    }
+  
+    .timing-header-row .col-sector:nth-child(5) {
+      display: none;
+    }
+  
+    .driver-info {
+      gap: 0.5rem;
+    }
+  }

@@ -1,0 +1,251 @@
+/* CircuitMap.css - Circuit visualization styles */
+
+.circuit-map {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, 0.3);
+    position: relative;
+  }
+  
+  .circuit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background: rgba(0, 0, 0, 0.6);
+    border-bottom: 2px solid rgba(255, 0, 0, 0.3);
+  }
+  
+  .circuit-header h3 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #ffffff;
+    font-weight: 700;
+  }
+  
+  .circuit-stats {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  
+  .car-count {
+    font-size: 0.9rem;
+    color: #cccccc;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 0.3rem 0.8rem;
+    border-radius: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+  
+  .circuit-canvas {
+    flex: 1;
+    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .circuit-canvas:hover {
+    border-color: rgba(255, 0, 0, 0.3);
+  }
+  
+  /* No Data State */
+  .no-data {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: #888888;
+    z-index: 10;
+  }
+  
+  .no-data p {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+    color: #cccccc;
+  }
+  
+  .no-data span {
+    font-size: 0.9rem;
+    color: #888888;
+  }
+  
+  /* Circuit Legend */
+  .circuit-legend {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 140px;
+  }
+  
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: #cccccc;
+  }
+  
+  .legend-line {
+    width: 20px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 2px;
+  }
+  
+  .legend-start {
+    width: 20px;
+    height: 4px;
+    background: #ffffff;
+    border-radius: 2px;
+  }
+  
+  .legend-car {
+    width: 8px;
+    height: 8px;
+    background: #ff0000;
+    border-radius: 50%;
+  }
+  
+  /* Circuit Info Overlay */
+  .circuit-info {
+    position: absolute;
+    top: 80px;
+    left: 15px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 1rem;
+    min-width: 200px;
+  }
+  
+  .circuit-info h4 {
+    margin: 0 0 0.5rem 0;
+    color: #ffffff;
+    font-size: 1rem;
+  }
+  
+  .circuit-info p {
+    margin: 0.25rem 0;
+    color: #cccccc;
+    font-size: 0.9rem;
+  }
+  
+  /* Loading Animation for Track */
+  .track-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #cccccc;
+    font-size: 0.9rem;
+  }
+  
+  .track-loading::before {
+    content: '';
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-top: 2px solid #ff0000;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  
+  /* Car Animation */
+  @keyframes car-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+  }
+  
+  /* Selected car animation */
+  .circuit-canvas:hover .selected-car {
+    animation: car-pulse 2s infinite;
+  }
+  
+  /* Responsive Design */
+  @media (max-width: 768px) {
+    .circuit-header {
+      padding: 0.8rem 1rem;
+    }
+  
+    .circuit-header h3 {
+      font-size: 1.1rem;
+    }
+  
+    .circuit-legend {
+      bottom: 10px;
+      right: 10px;
+      padding: 0.6rem;
+      min-width: 120px;
+    }
+  
+    .legend-item {
+      font-size: 0.75rem;
+    }
+  
+    .circuit-info {
+      top: 70px;
+      left: 10px;
+      padding: 0.8rem;
+      min-width: 160px;
+    }
+  
+    .circuit-info h4 {
+      font-size: 0.9rem;
+    }
+  
+    .circuit-info p {
+      font-size: 0.8rem;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .circuit-header {
+      padding: 0.6rem 0.8rem;
+      flex-direction: column;
+      gap: 0.5rem;
+      text-align: center;
+    }
+  
+    .circuit-legend {
+      position: relative;
+      bottom: auto;
+      right: auto;
+      margin: 0.5rem;
+      background: rgba(0, 0, 0, 0.9);
+      flex-direction: row;
+      justify-content: space-around;
+      min-width: auto;
+    }
+  
+    .legend-item {
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.7rem;
+      text-align: center;
+    }
+  
+    .circuit-info {
+      display: none; /* Hide on very small screens */
+    }
+  }
+  
+  /* Animation keyframes */
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
