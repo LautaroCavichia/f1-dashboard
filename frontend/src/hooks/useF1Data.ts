@@ -5,11 +5,14 @@ import {
   CarData, 
   Position, 
   Location, 
+  LapData, 
   PitData, 
   Stint, 
+  Interval, 
   Session,
   DriverTiming 
 } from '../types/f1';
+import { UPDATE_INTERVALS, DEFAULTS } from '../utils/constants';
 
 interface F1DataState {
   // Core data
@@ -18,8 +21,10 @@ interface F1DataState {
   carData: CarData[];
   positions: Position[];
   locations: Location[];
+  laps: LapData[];
   pitData: PitData[];
   stints: Stint[];
+  intervals: Interval[];
   
   // Processed data
   driverTimings: DriverTiming[];
@@ -29,20 +34,24 @@ interface F1DataState {
   error: string | null;
   lastUpdate: Date | null;
   isLive: boolean;
-  isHealthy: boolean;
 }
 
 interface UseF1DataOptions {
-  sessionKey?: string;
+  sessionKey?: string | number;
   autoRefresh?: boolean;
   refreshInterval?: number;
 }
 
+interface LiveTimingResponse {
+  error?: string;
+  driverTimings?: any[];
+}
+
 export const useF1Data = (options: UseF1DataOptions = {}) => {
   const {
-    sessionKey = 'latest',
+    sessionKey = DEFAULTS.SESSION_KEY,
     autoRefresh = true,
-    refreshInterval = 30000 // 30 seconds
+    refreshInterval = UPDATE_INTERVALS.TIMING_DATA
   } = options;
 
   const [state, setState] = useState<F1DataState>({
@@ -51,163 +60,178 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
     carData: [],
     positions: [],
     locations: [],
+    laps: [],
     pitData: [],
     stints: [],
+    intervals: [],
     driverTimings: [],
     loading: true,
     error: null,
     lastUpdate: null,
-    isLive: false,
-    isHealthy: false
+    isLive: false
   });
 
   const intervalRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const mountedRef = useRef(true);
-  const currentSessionKey = useRef<string>(sessionKey);
+  const actualSessionKey = useRef<string | number>(sessionKey);
 
   /**
    * Safe state update (only if component is still mounted)
    */
   const safeSetState = useCallback((updater: Partial<F1DataState> | ((prev: F1DataState) => F1DataState)) => {
     if (mountedRef.current) {
-      setState(prev => typeof updater === 'function' ? updater(prev) : { ...prev, ...updater });
+      setState(prev => {
+        const newState = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+        console.log('[useF1Data] State update:', {
+          loading: newState.loading,
+          drivers: newState.drivers.length,
+          driverTimings: newState.driverTimings.length,
+          error: newState.error,
+          session: newState.session?.session_name
+        });
+        return newState;
+      });
     }
   }, []);
 
   /**
-   * Check backend health
+   * Convert live timing data to our internal format
    */
-  const checkHealth = useCallback(async (): Promise<boolean> => {
-    try {
-      const isHealthy = await f1Api.healthCheck();
-      safeSetState({ isHealthy });
-      return isHealthy;
-    } catch (error) {
-      console.error('[useF1Data] Health check failed:', error);
-      safeSetState({ isHealthy: false });
-      return false;
+  const processLiveTimingData = useCallback((liveTimingData: any): {
+    driverTimings: DriverTiming[];
+    drivers: Driver[];
+  } => {
+    console.log('[useF1Data] Processing live timing data:', liveTimingData);
+    
+    if (!liveTimingData || !liveTimingData.driverTimings) {
+      console.log('[useF1Data] No driver timings in live data');
+      return { driverTimings: [], drivers: [] };
     }
-  }, [safeSetState]);
+
+    const driverTimings = liveTimingData.driverTimings.map((timing: any) => ({
+      driver: timing.driver,
+      position: timing.position || 0,
+      lapTime: timing.lapTime || '--:--.---',
+      sector1: timing.sector1 || '---.---',
+      sector2: timing.sector2 || '---.---',
+      sector3: timing.sector3 || '---.---',
+      gap: timing.gap || '--',
+      interval: timing.interval || '--',
+      lastLap: timing.lastLap || 0,
+      tyreCompound: timing.tyreCompound || 'UNKNOWN',
+      tyreAge: timing.tyreAge || 0,
+      pitStops: timing.pitStops || 0
+    }));
+
+    const drivers = driverTimings.map((timing: DriverTiming) => timing.driver);
+
+    console.log('[useF1Data] Processed timings:', { driverTimings, drivers });
+    return { driverTimings, drivers };
+  }, []);
 
   /**
-   * Fetch session information
+   * Fetch session and determine actual session key to use
    */
-  const fetchSession = useCallback(async (): Promise<Session | null> => {
+  const fetchSessionKey = useCallback(async (): Promise<string | null> => {
     try {
-      console.log('[useF1Data] Fetching session...');
+      console.log(`[useF1Data] Fetching session for key: ${sessionKey}`);
       
-      const sessionResponse = await f1Api.getCurrentOrLatestSession();
+      let sessionResponse: {session: Session | null, message: string, is_live: boolean} | null = null;
       
+      if (sessionKey === 'latest' || sessionKey === DEFAULTS.SESSION_KEY) {
+        // Use the new current-or-latest endpoint
+        sessionResponse = await f1Api.getCurrentOrLatestSession();
+      } else {
+        // Specific session key requested
+        const session = await f1Api.getSessionByKey(sessionKey.toString());
+        if (session) {
+          sessionResponse = {
+            session,
+            message: 'Specific session',
+            is_live: false // We'll determine this later
+          };
+        }
+      }
+
       if (sessionResponse?.session) {
         const session = sessionResponse.session;
-        const isLive = sessionResponse.is_live || false;
-        const isCompleted = sessionResponse.is_completed || false;
+        const actualKey = session.session_key.toString();
+        actualSessionKey.current = actualKey;
         
-        currentSessionKey.current = session.session_key.toString();
+        console.log(`[useF1Data] Using session: ${session.session_name} (${actualKey})`);
+        console.log(`[useF1Data] Message: ${sessionResponse.message}`);
         
-        console.log(`[useF1Data] Session found: ${session.session_name} at ${session.circuit_short_name}`);
-        console.log(`[useF1Data] Session status - Live: ${isLive}, Completed: ${isCompleted}`);
-        console.log(`[useF1Data] Using session key: ${currentSessionKey.current}`);
-        
+        // Update session in state
         safeSetState(prev => ({ 
           ...prev, 
           session,
-          isLive 
+          isLive: sessionResponse!.is_live 
         }));
         
-        return session;
+        return actualKey;
       } else {
-        const message = sessionResponse?.message || 'No session data returned';
-        console.log(`[useF1Data] No session found: ${message}`);
-        safeSetState(prev => ({ 
-          ...prev, 
-          session: null,
-          isLive: false 
-        }));
-        return null;
+        console.log('[useF1Data] No session found');
+        throw new Error(sessionResponse?.message || 'No F1 session available');
       }
     } catch (error) {
       console.error('[useF1Data] Error fetching session:', error);
       throw error;
     }
-  }, [safeSetState]);
+  }, [sessionKey, safeSetState]);
 
   /**
-   * Fetch all F1 data
+   * Fetch all F1 data using the backend API
    */
-  const fetchData = useCallback(async (forceRefresh: boolean = false) => {
+  const fetchData = useCallback(async () => {
     try {
-      console.log('[useF1Data] Starting data fetch...', { forceRefresh });
-      
-      if (forceRefresh) {
-        console.log('[useF1Data] Clearing API cache...');
-        f1Api.clearCache();
-      }
-      
+      console.log('[useF1Data] Starting data fetch...');
       safeSetState({ loading: true, error: null });
 
-      // Check backend health first
-      console.log('[useF1Data] Checking backend health...');
-      const isHealthy = await checkHealth();
-      if (!isHealthy) {
-        throw new Error('Backend API is not available - check that the backend is running on localhost:8000');
+      // First, check backend health
+      const isBackendHealthy = await f1Api.healthCheck();
+      if (!isBackendHealthy) {
+        throw new Error('Backend API is not available');
       }
-      console.log('[useF1Data] Backend health check passed');
 
-      // Get session information
-      console.log('[useF1Data] Fetching session information...');
-      const session = await fetchSession();
-      if (!session) {
-        throw new Error('No F1 session available - this might be normal if there are no recent sessions');
+      // Get the actual session key to use
+      const actualKey = await fetchSessionKey();
+      if (!actualKey) {
+        throw new Error('No F1 session available');
       }
-      console.log('[useF1Data] Session loaded successfully');
 
-      const actualSessionKey = currentSessionKey.current;
-      console.log(`[useF1Data] Using session key: ${actualSessionKey} for data loading`);
+      console.log(`[useF1Data] Fetching data for session: ${actualKey}`);
 
-      // Get live timing data (contains drivers and timing info)
-      console.log('[useF1Data] Fetching live timing data...');
-      const liveTimingData = await f1Api.getLiveTimingData(actualSessionKey);
+      // Get live timing data (this contains most of what we need)
+      const liveTimingData = await f1Api.getLiveTimingData(actualKey) as LiveTimingResponse;
       
       if (liveTimingData.error) {
-        console.error('[useF1Data] Live timing error:', liveTimingData.error);
-        throw new Error(`Live timing data error: ${liveTimingData.error}`);
+        throw new Error(liveTimingData.error);
       }
 
-      console.log(`[useF1Data] Live timing data loaded: ${liveTimingData.driverTimings.length} drivers`);
-
-      // Process driver timings
-      const driverTimings = liveTimingData.driverTimings || [];
-      const drivers = driverTimings.map((timing: any) => timing.driver);
+      // Process the live timing data
+      const { driverTimings, drivers } = processLiveTimingData(liveTimingData);
 
       if (drivers.length === 0) {
-        console.warn('[useF1Data] No drivers found in timing data');
-        // Continue anyway - maybe other endpoints have data
+        console.log('[useF1Data] No drivers found, continuing with limited data...');
       }
 
-      // Fetch additional data in parallel (non-blocking)
-      console.log('[useF1Data] Fetching additional data in parallel...');
+      console.log('[useF1Data] About to fetch additional data...');
+
+      // Fetch additional data in parallel (with error handling)
       const [positions, locations, carData, pitData, stints] = await Promise.allSettled([
-        f1Api.getPositions(actualSessionKey),
-        f1Api.getLocations(actualSessionKey),
-        f1Api.getCarData(actualSessionKey),
-        f1Api.getPitData(actualSessionKey),
-        f1Api.getStints(actualSessionKey)
+        f1Api.getPositions(actualKey),
+        f1Api.getLocations(actualKey),
+        f1Api.getCarData(actualKey.toString()),
+        f1Api.getPitData(actualKey),
+        f1Api.getStints(actualKey)
       ]);
 
-      // Extract successful results, use empty arrays for failures
+      // Extract successful results
       const positionsData = positions.status === 'fulfilled' ? positions.value : [];
       const locationsData = locations.status === 'fulfilled' ? locations.value : [];
       const carDataData = carData.status === 'fulfilled' ? carData.value : [];
       const pitDataData = pitData.status === 'fulfilled' ? pitData.value : [];
       const stintsData = stints.status === 'fulfilled' ? stints.value : [];
-
-      // Log any failed requests
-      if (positions.status === 'rejected') console.warn('[useF1Data] Positions failed:', positions.reason);
-      if (locations.status === 'rejected') console.warn('[useF1Data] Locations failed:', locations.reason);
-      if (carData.status === 'rejected') console.warn('[useF1Data] Car data failed:', carData.reason);
-      if (pitData.status === 'rejected') console.warn('[useF1Data] Pit data failed:', pitData.reason);
-      if (stints.status === 'rejected') console.warn('[useF1Data] Stints failed:', stints.reason);
 
       console.log('[useF1Data] Additional data loaded:', {
         positions: positionsData.length,
@@ -217,8 +241,21 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
         stints: stintsData.length
       });
 
-      // Update state with all data
-      const newState = {
+      // Check if session is live (rough estimation)
+      const session = state.session;
+      const isLive = session ? 
+        new Date().getTime() >= new Date(session.date_start).getTime() &&
+        new Date().getTime() <= new Date(session.date_end).getTime() : false;
+
+      console.log('[useF1Data] About to update state with:', {
+        drivers: drivers.length,
+        driverTimings: driverTimings.length,
+        loading: false,
+        hasError: false
+      });
+
+      // CRITICAL FIX: Use a single setState call with all updates
+      safeSetState({
         drivers,
         driverTimings,
         positions: positionsData,
@@ -226,70 +263,62 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
         carData: carDataData,
         pitData: pitDataData,
         stints: stintsData,
-        loading: false,
+        intervals: [], // We'll get this from live timing later
+        laps: [], // Not implemented yet
+        loading: false, // CRITICAL: This must be set to false
         lastUpdate: new Date(),
+        isLive,
         error: null
-      };
-      
-      console.log('[useF1Data] About to update state with:', {
-        drivers: drivers.length,
-        driverTimings: driverTimings.length,
-        loading: false,
-        hasError: false
       });
-      
-      safeSetState(newState);
 
       console.log('[useF1Data] Data fetch completed successfully - setting loading to false');
-      
-      // Force a second update to ensure loading is false
+
+      // Double-check: Force loading to false in a separate call if needed
       setTimeout(() => {
-        console.log('[useF1Data] Force ensuring loading is false');
-        safeSetState(prev => ({ ...prev, loading: false }));
+        if (mountedRef.current) {
+          safeSetState(prev => {
+            if (prev.loading) {
+              console.log('[useF1Data] Force ensuring loading is false');
+              return { ...prev, loading: false };
+            }
+            return prev;
+          });
+        }
       }, 100);
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch data';
       console.error('[useF1Data] Failed to fetch F1 data:', error);
-      console.error('[useF1Data] Full error details:', error);
-      
       safeSetState({ 
         loading: false, 
-        error: errorMessage
+        error: error instanceof Error ? error.message : 'Failed to fetch data' 
       });
     }
-  }, [safeSetState, checkHealth, fetchSession]);
+  }, [sessionKey, processLiveTimingData, safeSetState, fetchSessionKey, state.session]);
 
   /**
-   * Fetch only fast-updating data (for live sessions)
+   * Fetch only fast-updating data (for frequent updates)
    */
   const fetchFastData = useCallback(async () => {
     try {
-      const actualSessionKey = currentSessionKey.current;
-      if (!actualSessionKey || actualSessionKey === 'latest') return;
+      const actualKey = actualSessionKey.current;
+      if (!actualKey) return;
 
       console.log('[useF1Data] Fetching fast data...');
 
-      // Only fetch fast-changing data
-      const [carData, locations, positions] = await Promise.allSettled([
-        f1Api.getCarData(actualSessionKey),
-        f1Api.getLocations(actualSessionKey),
-        f1Api.getPositions(actualSessionKey)
+      const [carData, locations] = await Promise.allSettled([
+        f1Api.getCarData(actualKey.toString()),
+        f1Api.getLocations(actualKey.toString())
       ]);
 
       const carDataData = carData.status === 'fulfilled' ? carData.value : [];
       const locationsData = locations.status === 'fulfilled' ? locations.value : [];
-      const positionsData = positions.status === 'fulfilled' ? positions.value : [];
 
       safeSetState(prev => ({
         ...prev,
         carData: carDataData,
         locations: locationsData,
-        positions: positionsData,
         lastUpdate: new Date()
       }));
-
-      console.log('[useF1Data] Fast data updated');
 
     } catch (error) {
       console.error('[useF1Data] Failed to fetch fast data:', error);
@@ -301,7 +330,7 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
    */
   const refresh = useCallback(() => {
     console.log('[useF1Data] Manual refresh triggered');
-    fetchData(true); // Force refresh with cache clear
+    fetchData();
   }, [fetchData]);
 
   /**
@@ -312,6 +341,7 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
     const carData = state.carData.filter(c => c.driver_number === driverNumber);
     const positions = state.positions.filter(p => p.driver_number === driverNumber);
     const locations = state.locations.filter(l => l.driver_number === driverNumber);
+    const laps = state.laps.filter(l => l.driver_number === driverNumber);
     const timing = state.driverTimings.find(t => t.driver.driver_number === driverNumber);
 
     return {
@@ -319,15 +349,17 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
       carData,
       positions,
       locations,
+      laps,
       timing
     };
   }, [state]);
 
-  // Initial data fetch
+  // Initial data fetch - IMPORTANT: This should run when sessionKey changes
   useEffect(() => {
-    console.log('[useF1Data] Initial data fetch triggered');
+    console.log('[useF1Data] Session key changed, triggering data fetch:', sessionKey);
+    actualSessionKey.current = sessionKey;
     fetchData();
-  }, [fetchData]);
+  }, [sessionKey]); // Only depend on sessionKey, not fetchData to avoid loops
 
   // Auto-refresh setup
   useEffect(() => {
@@ -336,12 +368,10 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
     console.log(`[useF1Data] Setting up auto-refresh every ${refreshInterval}ms`);
     
     intervalRef.current = setInterval(() => {
-      if (state.isLive && !state.loading) {
-        // For live sessions, use fast data updates
-        fetchFastData();
-      } else if (!state.loading) {
-        // For non-live sessions, full refresh less frequently
-        fetchData();
+      if (state.isLive) {
+        fetchFastData(); // Fast updates during live session
+      } else {
+        fetchData(); // Full updates for non-live sessions
       }
     }, refreshInterval);
 
@@ -350,7 +380,7 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
         clearInterval(intervalRef.current);
       }
     };
-  }, [autoRefresh, refreshInterval, state.isLive, state.loading, fetchData, fetchFastData]);
+  }, [autoRefresh, refreshInterval, state.isLive, fetchData, fetchFastData]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -362,38 +392,6 @@ export const useF1Data = (options: UseF1DataOptions = {}) => {
       }
     };
   }, []);
-
-  // Debug logging - with more detail
-  useEffect(() => {
-    const debugInfo = {
-      session: state.session?.session_name || 'None',
-      sessionKey: state.session?.session_key || 'None',
-      drivers: state.drivers.length,
-      timings: state.driverTimings.length,
-      isLive: state.isLive,
-      isHealthy: state.isHealthy,
-      loading: state.loading,
-      error: state.error,
-      lastUpdate: state.lastUpdate?.toISOString() || 'Never',
-      // Add raw state for debugging
-      hasSession: !!state.session,
-      hasDrivers: state.drivers.length > 0,
-      hasTimings: state.driverTimings.length > 0
-    };
-    
-    console.log('[useF1Data] State update:', debugInfo);
-    
-    // Extra logging when loading changes
-    if (debugInfo.loading !== undefined) {
-      console.log(`[useF1Data] LOADING STATE: ${debugInfo.loading}`);
-    }
-    
-    // Log when we have data but still loading
-    if (!debugInfo.loading && debugInfo.drivers > 0) {
-      console.log('[useF1Data] ✅ DATA LOADED SUCCESSFULLY - should show dashboard now');
-    }
-    
-  }, [state]);
 
   return {
     ...state,
