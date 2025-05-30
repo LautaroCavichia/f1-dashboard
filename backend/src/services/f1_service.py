@@ -418,3 +418,19 @@ class F1Service:
             'cache_entries': len(self.cache),
             'cache_ttl': self.cache_ttl
         }
+        
+    async def get_meetings(self, year: int) -> List[Dict]:
+        """Get all meetings for a specific year"""
+        try:
+            return await self._make_request("meetings", {"year": year})
+        except Exception as e:
+            logger.error(f"Error getting meetings for year {year}: {e}")
+            return []
+
+    async def get_sessions_by_meeting(self, meeting_key: str) -> List[Dict]:
+        """Get all sessions for a specific meeting"""
+        try:
+            return await self._make_request("sessions", {"meeting_key": meeting_key})
+        except Exception as e:
+            logger.error(f"Error getting sessions for meeting {meeting_key}: {e}")
+            return []

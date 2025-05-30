@@ -105,6 +105,7 @@ export interface Driver {
     gmt_offset: string;
     location: string;
     meeting_key: number;
+    meeting_name: string;
     session_key: number;
     session_name: string;
     session_type: string;
@@ -169,7 +170,8 @@ export interface Driver {
   }
   
   export interface WebSocketMessage {
-    type: 'CAR_DATA' | 'POSITION' | 'LAP_DATA' | 'PIT_DATA' | 'INTERVAL' | 'DRIVER_UPDATE' | 'PING' | 'PONG' | 'HEARTBEAT';
+    type: 'CAR_DATA' | 'POSITION' | 'LAP_DATA' | 'PIT_DATA' | 'INTERVAL' | 'DRIVER_UPDATE' | 
+          'PING' | 'PONG' | 'HEARTBEAT' | 'LOCATION' | 'SESSION_INFO' | 'NO_SESSION';
     data?: any;
     timestamp: string;
   }

@@ -357,6 +357,120 @@ async def get_weather(session_key: str):
     except Exception as e:
         logger.error(f"Error getting weather for session {session_key}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/api/sessions")
+async def get_all_sessions(year: int = None):
+    """Get all sessions, optionally filtered by year"""
+    try:
+        if year is None:
+            year = datetime.now().year
+            
+        # Get meetings for the year
+        meetings = await f1_service._make_request("meetings", {"year": year})
+        
+        all_sessions = []
+        for meeting in meetings:
+            meeting_key = meeting.get('meeting_key')
+            if meeting_key:
+                # Get sessions for this meeting
+                sessions = await f1_service._make_request("sessions", {"meeting_key": meeting_key})
+                for session in sessions:
+                    session['meeting_name'] = meeting.get('meeting_name', '')
+                    session['circuit_short_name'] = meeting.get('circuit_short_name', '')
+                    session['location'] = meeting.get('location', '')
+                    session['country_name'] = meeting.get('country_name', '')
+                    all_sessions.append(session)
+        
+        # Sort by date (newest first)
+        all_sessions.sort(key=lambda x: x.get('date_start', ''), reverse=True)
+        
+        return {
+            "sessions": all_sessions,
+            "total": len(all_sessions),
+            "year": year
+        }
+    except Exception as e:
+        logger.error(f"Error getting sessions for year {year}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sessions/latest-completed")
+async def get_latest_completed_session():
+    """Get the most recent completed session"""
+    try:
+        # Get current year sessions
+        current_year = datetime.now().year
+        year_response = await get_all_sessions(current_year)
+        sessions = year_response["sessions"]
+        
+        if not sessions:
+            # Try previous year if no sessions this year
+            prev_year_response = await get_all_sessions(current_year - 1)
+            sessions = prev_year_response["sessions"]
+        
+        # Find the most recent completed session
+        now = datetime.utcnow()
+        completed_sessions = [
+            s for s in sessions 
+            if datetime.fromisoformat(s['date_end'].replace('Z', '+00:00')) < now
+        ]
+        
+        if completed_sessions:
+            latest = completed_sessions[0]  # Already sorted by date desc
+            return {
+                "session": latest,
+                "message": "Latest completed session",
+                "is_live": False
+            }
+        else:
+            # If no completed sessions, return the most recent one anyway
+            if sessions:
+                return {
+                    "session": sessions[0],
+                    "message": "Most recent session (may be upcoming)",
+                    "is_live": False
+                }
+            else:
+                raise HTTPException(status_code=404, detail="No sessions found")
+                
+    except Exception as e:
+        logger.error(f"Error getting latest completed session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sessions/current-or-latest")
+async def get_current_or_latest_session():
+    """Get current live session, or fall back to latest completed session"""
+    try:
+        # First try to get current live session
+        try:
+            sessions = await f1_service._make_request("sessions", {"session_key": "latest"})
+            if sessions:
+                current_session = sessions[0]
+                
+                # Check if it's actually live
+                now = datetime.utcnow()
+                start_time = datetime.fromisoformat(current_session['date_start'].replace('Z', '+00:00'))
+                end_time = datetime.fromisoformat(current_session['date_end'].replace('Z', '+00:00'))
+                
+                is_live = start_time <= now <= end_time
+                
+                return {
+                    "session": current_session,
+                    "message": "Current live session" if is_live else "Most recent session",
+                    "is_live": is_live
+                }
+        except:
+            pass
+        
+        # Fall back to latest completed session
+        return await get_latest_completed_session()
+        
+    except Exception as e:
+        logger.error(f"Error getting current or latest session: {e}")
+        return {
+            "session": None,
+            "message": f"No sessions available: {str(e)}",
+            "is_live": False
+        }
 
 if __name__ == "__main__":
     uvicorn.run(

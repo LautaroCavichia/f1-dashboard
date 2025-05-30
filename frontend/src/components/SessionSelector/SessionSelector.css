@@ -1,0 +1,278 @@
+/* SessionSelector.css */
+
+.session-selector-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: #ffffff;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+  
+  .session-selector-toggle:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 0, 0, 0.4);
+  }
+  
+  .toggle-icon {
+    font-size: 0.8rem;
+    transition: transform 0.3s ease;
+  }
+  
+  .session-selector-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(5px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 2rem;
+  }
+  
+  .session-selector-panel {
+    background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+    border: 1px solid rgba(255, 0, 0, 0.3);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  }
+  
+  .selector-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    background: rgba(255, 0, 0, 0.1);
+    border-bottom: 1px solid rgba(255, 0, 0, 0.2);
+  }
+  
+  .selector-header h3 {
+    margin: 0;
+    color: #ffffff;
+    font-size: 1.2rem;
+    font-weight: 600;
+  }
+  
+  .close-btn {
+    background: none;
+    border: none;
+    color: #ffffff;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.3s ease;
+  }
+  
+  .close-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  
+  .year-selector {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 2rem;
+    background: rgba(0, 0, 0, 0.3);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .year-selector label {
+    color: #cccccc;
+    font-weight: 500;
+  }
+  
+  .year-selector select {
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #ffffff;
+    font-size: 0.9rem;
+  }
+  
+  .year-selector select option {
+    background: #2a2a2a;
+    color: #ffffff;
+  }
+  
+  .sessions-list {
+    max-height: 50vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 0, 0, 0.3) rgba(0, 0, 0, 0.1);
+  }
+  
+  .sessions-list::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .sessions-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+  }
+  
+  .sessions-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 0, 0, 0.3);
+    border-radius: 3px;
+  }
+  
+  .loading-sessions,
+  .no-sessions {
+    padding: 3rem 2rem;
+    text-align: center;
+    color: #888888;
+    font-style: italic;
+  }
+  
+  .session-group {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .group-header {
+    padding: 1rem 2rem 0.5rem;
+    background: rgba(0, 0, 0, 0.2);
+  }
+  
+  .group-header h4 {
+    margin: 0 0 0.25rem 0;
+    color: #ffffff;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  
+  .location {
+    color: #888888;
+    font-size: 0.85rem;
+  }
+  
+  .group-sessions {
+    padding: 0.5rem 0;
+  }
+  
+  .session-item {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 2rem;
+    background: none;
+    border: none;
+    color: #ffffff;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-align: left;
+  }
+  
+  .session-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  
+  .session-item.current {
+    background: rgba(255, 0, 0, 0.2);
+    border-left: 3px solid #ff0000;
+  }
+  
+  .session-item.live {
+    background: rgba(0, 255, 0, 0.1);
+    border-left: 3px solid #00ff00;
+  }
+  
+  .session-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  
+  .session-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  
+  .session-date {
+    color: #888888;
+    font-size: 0.8rem;
+  }
+  
+  .session-status {
+    display: flex;
+    align-items: center;
+  }
+  
+  .status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  .status-badge.live {
+    background: #00ff00;
+    color: #000000;
+    animation: pulse 2s infinite;
+  }
+  
+  .status-badge.completed {
+    background: rgba(100, 200, 255, 0.2);
+    color: #64c8ff;
+    border: 1px solid rgba(100, 200, 255, 0.3);
+  }
+  
+  .status-badge.upcoming {
+    background: rgba(255, 170, 0, 0.2);
+    color: #ffaa00;
+    border: 1px solid rgba(255, 170, 0, 0.3);
+  }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+  
+  /* Responsive */
+  @media (max-width: 768px) {
+    .session-selector-overlay {
+      padding: 1rem;
+    }
+    
+    .selector-header {
+      padding: 1rem 1.5rem;
+    }
+    
+    .year-selector {
+      padding: 0.75rem 1.5rem;
+    }
+    
+    .group-header {
+      padding: 0.75rem 1.5rem 0.25rem;
+    }
+    
+    .session-item {
+      padding: 0.75rem 1.5rem;
+    }
+    
+    .session-selector-toggle {
+      font-size: 0.8rem;
+      padding: 0.6rem 0.8rem;
+    }
+  }

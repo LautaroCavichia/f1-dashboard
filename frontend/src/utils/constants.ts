@@ -1,4 +1,4 @@
-// API Configuration - Updated for rate limiting
+// API Configuration
 export const API_CONFIG = {
     OPENF1_BASE_URL: 'https://api.openf1.org/v1',
     BACKEND_BASE_URL: process.env.NODE_ENV === 'production' 
@@ -9,11 +9,11 @@ export const API_CONFIG = {
       : 'ws://localhost:8000/ws'
   };
   
-  // Update intervals (increased to reduce API pressure)
+  // Update intervals (conservative to reduce API pressure)
   export const UPDATE_INTERVALS = {
     TELEMETRY: 15000,       // 15 seconds for telemetry data
     POSITIONS: 10000,       // 10 seconds for car positions
-    LAP_TIMES: 20000,       // 20 seconds for lap timing
+    LAP_TIMES: 30000,       // 30 seconds for lap timing (increased)
     WEATHER: 120000,        // 2 minutes for weather data
     RETRY_CONNECTION: 10000, // 10 seconds for WebSocket retry
     HEARTBEAT: 30000        // 30 seconds for connection heartbeat
@@ -57,8 +57,8 @@ export const API_CONFIG = {
   
   // Data refresh configuration - more conservative
   export const REFRESH_CONFIG = {
-    MAX_RETRIES: 5,
-    TIMEOUT: 30000,           // 30 seconds timeout
+    MAX_RETRIES: 3,           // Reduced retries
+    TIMEOUT: 15000,           // 15 seconds timeout
     BATCH_SIZE: 20,
     RETRY_DELAY: 2000,        // 2 seconds between retries
     RATE_LIMIT_DELAY: 60000   // 1 minute delay on rate limit
@@ -79,12 +79,13 @@ export const API_CONFIG = {
     DATA_UNAVAILABLE: 'Data temporarily unavailable',
     WEBSOCKET_ERROR: 'Real-time connection lost',
     RATE_LIMITED: 'API rate limit reached, using cached data',
-    SERVER_ERROR: 'Server temporarily unavailable'
+    SERVER_ERROR: 'Server temporarily unavailable',
+    BACKEND_UNAVAILABLE: 'Backend server is not responding'
   };
   
-  // Default values
+  // Default values - IMPORTANT: Use 'latest' instead of actual session key
   export const DEFAULTS = {
-    SESSION_KEY: 'latest',
+    SESSION_KEY: 'latest',    // This will be resolved to actual session key
     MEETING_KEY: 'latest',
     MAX_DRIVERS: 20,
     FALLBACK_REFRESH: 60000   // 1 minute fallback refresh
@@ -92,7 +93,7 @@ export const API_CONFIG = {
   
   // Rate limiting configuration
   export const RATE_LIMIT = {
-    MAX_REQUESTS_PER_MINUTE: 30,
+    MAX_REQUESTS_PER_MINUTE: 20,  // Reduced from 30
     BACKOFF_MULTIPLIER: 2,
-    MAX_BACKOFF_TIME: 300000  // 5 minutes max backoff
+    MAX_BACKOFF_TIME: 300000      // 5 minutes max backoff
   };
