@@ -1,31 +1,96 @@
-import { API_CONFIG, DEFAULTS, REFRESH_CONFIG } from '../utils/constants';
+import { API_CONFIG } from '../utils/constants';
 import { 
   Driver, 
   CarData, 
   Position, 
   Location, 
-  LapData, 
   PitData, 
   Stint, 
-  Interval, 
-  Session, 
-  Meeting, 
-  Weather 
+  Session 
 } from '../types/f1';
+
+interface ApiResponse<T> {
+  success?: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
+
+interface SessionResponse {
+  session: Session | null;
+  message: string;
+  is_live: boolean;
+  is_upcoming?: boolean;
+  is_completed?: boolean;
+}
+
+interface LiveTimingResponse {
+  driverTimings: any[];
+  lastUpdate: string;
+  sessionKey: string;
+  totalDrivers?: number;
+  error?: string;
+}
 
 class F1ApiService {
   private backendUrl = API_CONFIG.BACKEND_BASE_URL;
+  private cache = new Map<string, { data: any; timestamp: number; ttl: number }>();
+  private requestQueue = new Map<string, Promise<any>>();
 
   /**
-   * Generic fetch method with improved error handling
+   * Generic fetch with caching and deduplication
    */
-  private async fetchWithRetry<T>(url: string, retries = REFRESH_CONFIG.MAX_RETRIES): Promise<T> {
+  private async fetchWithCache<T>(
+    url: string, 
+    cacheTtl: number = 30000, // 30 seconds default
+    retries: number = 3
+  ): Promise<T> {
+    const cacheKey = url;
+    
+    // Check cache first
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < cached.ttl) {
+      console.log(`[F1API] Cache hit: ${url}`);
+      return cached.data;
+    }
+
+    // Check if request is already in progress (deduplication)
+    if (this.requestQueue.has(cacheKey)) {
+      console.log(`[F1API] Request in progress, waiting: ${url}`);
+      return this.requestQueue.get(cacheKey)!;
+    }
+
+    // Make the request
+    const requestPromise = this.makeRequest<T>(url, retries);
+    this.requestQueue.set(cacheKey, requestPromise);
+
+    try {
+      const result = await requestPromise;
+      
+      // Cache the result
+      this.cache.set(cacheKey, {
+        data: result,
+        timestamp: Date.now(),
+        ttl: cacheTtl
+      });
+      
+      return result;
+    } finally {
+      // Remove from queue when done
+      this.requestQueue.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Make HTTP request with retry logic
+   */
+  private async makeRequest<T>(url: string, retries: number): Promise<T> {
     console.log(`[F1API] Fetching: ${url}`);
     
-    for (let i = 0; i < retries; i++) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), REFRESH_CONFIG.TIMEOUT);
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
 
         const response = await fetch(url, {
           signal: controller.signal,
@@ -37,52 +102,53 @@ class F1ApiService {
 
         clearTimeout(timeoutId);
 
-        if (response.ok) {
-          const data = await response.json();
-          console.log(`[F1API] Success: ${url}`, data);
-          return data as T;
-        } else {
-          console.error(`[F1API] HTTP Error ${response.status}: ${url}`);
-          if (response.status === 404) {
-            // Don't retry 404s, return empty data
-            return {} as T;
-          }
-          throw new Error(`HTTP error! status: ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
+
+        const data = await response.json();
+        console.log(`[F1API] Success: ${url}`);
+        return data;
+
       } catch (error) {
-        console.warn(`[F1API] Attempt ${i + 1} failed for ${url}:`, error);
-        if (i === retries - 1) throw error;
+        console.warn(`[F1API] Attempt ${attempt}/${retries} failed for ${url}:`, error);
+        
+        if (attempt === retries) {
+          throw new Error(`Failed to fetch ${url} after ${retries} attempts: ${error}`);
+        }
         
         // Exponential backoff
-        const delay = Math.min(
-          REFRESH_CONFIG.RETRY_DELAY * Math.pow(2, i) + Math.random() * 1000,
-          10000
-        );
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
-    throw new Error('Max retries exceeded');
+    
+    throw new Error('Unexpected error in makeRequest');
   }
 
   /**
-   * Get current or latest session information
+   * Clear cache (useful for manual refresh)
    */
-  async getCurrentSession(): Promise<Session | null> {
+  clearCache(): void {
+    this.cache.clear();
+    console.log('[F1API] Cache cleared');
+  }
+
+  /**
+   * Get current or latest session
+   */
+  async getCurrentOrLatestSession(): Promise<SessionResponse | null> {
     try {
-      console.log('[F1API] Getting current session...');
-      const response = await this.fetchWithRetry<any>(`${this.backendUrl}/api/sessions/current`);
+      console.log('[F1API] Requesting current-or-latest session...');
+      const response = await this.fetchWithCache<SessionResponse>(
+        `${this.backendUrl}/api/sessions/current-or-latest`,
+        30000 // 30 seconds cache for session info
+      );
       
-      // Handle the response format from your backend
-      if (response && response.session) {
-        return response.session;
-      } else if (response && response.session_key) {
-        return response;
-      } else {
-        console.log('[F1API] No current session available');
-        return null;
-      }
+      console.log('[F1API] Session response:', response);
+      return response;
     } catch (error) {
-      console.error('[F1API] Failed to get current session:', error);
+      console.error('[F1API] Failed to get current/latest session:', error);
       return null;
     }
   }
@@ -92,8 +158,11 @@ class F1ApiService {
    */
   async getSessionByKey(sessionKey: string): Promise<Session | null> {
     try {
-      console.log(`[F1API] Getting session ${sessionKey}...`);
-      return await this.fetchWithRetry<Session>(`${this.backendUrl}/api/sessions/${sessionKey}`);
+      const response = await this.fetchWithCache<Session>(
+        `${this.backendUrl}/api/sessions/${sessionKey}`,
+        60000
+      );
+      return response;
     } catch (error) {
       console.error(`[F1API] Failed to get session ${sessionKey}:`, error);
       return null;
@@ -101,12 +170,14 @@ class F1ApiService {
   }
 
   /**
-   * Get all drivers for a specific session
+   * Get drivers for a session
    */
-  async getDrivers(sessionKey: string | number = DEFAULTS.SESSION_KEY): Promise<Driver[]> {
+  async getDrivers(sessionKey: string = 'latest'): Promise<Driver[]> {
     try {
-      console.log(`[F1API] Getting drivers for session ${sessionKey}...`);
-      const response = await this.fetchWithRetry<{drivers: Driver[]}>(`${this.backendUrl}/api/drivers/${sessionKey}`);
+      const response = await this.fetchWithCache<{drivers: Driver[]}>(
+        `${this.backendUrl}/api/drivers/${sessionKey}`,
+        300000 // 5 minutes cache for drivers (rarely changes)
+      );
       return response.drivers || [];
     } catch (error) {
       console.error('[F1API] Failed to get drivers:', error);
@@ -115,44 +186,34 @@ class F1ApiService {
   }
 
   /**
-   * Get live timing data (comprehensive)
+   * Get comprehensive live timing data
    */
-  async getLiveTimingData(sessionKey: string | number = DEFAULTS.SESSION_KEY) {
+  async getLiveTimingData(sessionKey: string = 'latest'): Promise<LiveTimingResponse> {
     try {
-      console.log(`[F1API] Getting live timing for session ${sessionKey}...`);
-      return await this.fetchWithRetry(`${this.backendUrl}/api/live-timing/${sessionKey}`);
+      return await this.fetchWithCache<LiveTimingResponse>(
+        `${this.backendUrl}/api/live-timing/${sessionKey}`,
+        10000 // 10 seconds cache for timing data
+      );
     } catch (error) {
-      console.error('[F1API] Failed to get live timing data:', error);
-      return { driverTimings: [], error: error instanceof Error ? error.message : 'Unknown error' };
+      console.error('[F1API] Failed to get live timing:', error);
+      return { 
+        driverTimings: [], 
+        lastUpdate: new Date().toISOString(),
+        sessionKey,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
     }
   }
 
   /**
-   * Get real-time car telemetry data
+   * Get car positions
    */
-  async getCarData(sessionKey: string | number = DEFAULTS.SESSION_KEY, driverNumber?: number): Promise<CarData[]> {
+  async getPositions(sessionKey: string = 'latest'): Promise<Position[]> {
     try {
-      console.log(`[F1API] Getting car data for session ${sessionKey}...`);
-      let url = `${this.backendUrl}/api/telemetry/${sessionKey}`;
-      if (driverNumber) {
-        url += `?driver_number=${driverNumber}`;
-      }
-      
-      const response = await this.fetchWithRetry<{telemetry: CarData[]}>(url);
-      return response.telemetry || [];
-    } catch (error) {
-      console.error('[F1API] Failed to get car data:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Get current driver positions
-   */
-  async getPositions(sessionKey: string | number = DEFAULTS.SESSION_KEY): Promise<Position[]> {
-    try {
-      console.log(`[F1API] Getting positions for session ${sessionKey}...`);
-      const response = await this.fetchWithRetry<{positions: Position[]}>(`${this.backendUrl}/api/positions/${sessionKey}`);
+      const response = await this.fetchWithCache<{positions: Position[]}>(
+        `${this.backendUrl}/api/positions/${sessionKey}`,
+        5000 // 5 seconds cache for positions
+      );
       return response.positions || [];
     } catch (error) {
       console.error('[F1API] Failed to get positions:', error);
@@ -161,12 +222,14 @@ class F1ApiService {
   }
 
   /**
-   * Get car locations on track
+   * Get car locations for track visualization
    */
-  async getLocations(sessionKey: string | number = DEFAULTS.SESSION_KEY): Promise<Location[]> {
+  async getLocations(sessionKey: string = 'latest'): Promise<Location[]> {
     try {
-      console.log(`[F1API] Getting locations for session ${sessionKey}...`);
-      const response = await this.fetchWithRetry<{locations: Location[]}>(`${this.backendUrl}/api/locations/${sessionKey}`);
+      const response = await this.fetchWithCache<{locations: Location[]}>(
+        `${this.backendUrl}/api/locations/${sessionKey}`,
+        5000 // 5 seconds cache
+      );
       return response.locations || [];
     } catch (error) {
       console.error('[F1API] Failed to get locations:', error);
@@ -175,12 +238,35 @@ class F1ApiService {
   }
 
   /**
-   * Get pit stop information and stints
+   * Get car telemetry data
    */
-  async getPitData(sessionKey: string | number = DEFAULTS.SESSION_KEY): Promise<PitData[]> {
+  async getCarData(sessionKey: string = 'latest', driverNumber?: number): Promise<CarData[]> {
     try {
-      console.log(`[F1API] Getting pit data for session ${sessionKey}...`);
-      const response = await this.fetchWithRetry<{pit_stops: PitData[]}>(`${this.backendUrl}/api/pit-stops/${sessionKey}`);
+      let url = `${this.backendUrl}/api/telemetry/${sessionKey}`;
+      if (driverNumber) {
+        url += `?driver_number=${driverNumber}`;
+      }
+      
+      const response = await this.fetchWithCache<{telemetry: CarData[]}>(
+        url,
+        3000 // 3 seconds cache for telemetry
+      );
+      return response.telemetry || [];
+    } catch (error) {
+      console.error('[F1API] Failed to get car data:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get pit stop data
+   */
+  async getPitData(sessionKey: string = 'latest'): Promise<PitData[]> {
+    try {
+      const response = await this.fetchWithCache<{pit_stops: PitData[]}>(
+        `${this.backendUrl}/api/pit-stops/${sessionKey}`,
+        30000 // 30 seconds cache for pit data
+      );
       return response.pit_stops || [];
     } catch (error) {
       console.error('[F1API] Failed to get pit data:', error);
@@ -189,12 +275,14 @@ class F1ApiService {
   }
 
   /**
-   * Get tyre stint information
+   * Get stint data
    */
-  async getStints(sessionKey: string | number = DEFAULTS.SESSION_KEY): Promise<Stint[]> {
+  async getStints(sessionKey: string = 'latest'): Promise<Stint[]> {
     try {
-      console.log(`[F1API] Getting stints for session ${sessionKey}...`);
-      const response = await this.fetchWithRetry<{stints: Stint[]}>(`${this.backendUrl}/api/pit-stops/${sessionKey}`);
+      const response = await this.fetchWithCache<{stints: Stint[]}>(
+        `${this.backendUrl}/api/pit-stops/${sessionKey}`,
+        30000 // 30 seconds cache
+      );
       return response.stints || [];
     } catch (error) {
       console.error('[F1API] Failed to get stint data:', error);
@@ -203,118 +291,69 @@ class F1ApiService {
   }
 
   /**
-   * Get interval/gap data (from live timing)
+   * Get circuit visualization data
    */
-  async getIntervals(sessionKey: string | number = DEFAULTS.SESSION_KEY): Promise<Interval[]> {
+  async getCircuitData(sessionKey: string = 'latest') {
     try {
-      // This data comes from live timing, so we'll extract it there
-      const liveData = await this.getLiveTimingData(sessionKey);
-      // Convert driver timings to interval format if needed
-      return [];
-    } catch (error) {
-      console.error('[F1API] Failed to get interval data:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Get weather information
-   */
-  async getWeather(sessionKey: string | number = DEFAULTS.SESSION_KEY): Promise<Weather[]> {
-    try {
-      console.log(`[F1API] Getting weather for session ${sessionKey}...`);
-      const response = await this.fetchWithRetry<{weather: Weather[]}>(`${this.backendUrl}/api/weather/${sessionKey}`);
-      return response.weather || [];
-    } catch (error) {
-      console.error('[F1API] Failed to get weather data:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Get circuit track data points for visualization
-   */
-  async getCircuitData(sessionKey: string | number = DEFAULTS.SESSION_KEY) {
-    try {
-      console.log(`[F1API] Getting circuit data for session ${sessionKey}...`);
-      return await this.fetchWithRetry(`${this.backendUrl}/api/circuit/${sessionKey}`);
+      return await this.fetchWithCache(
+        `${this.backendUrl}/api/circuit/${sessionKey}`,
+        300000 // 5 minutes cache for circuit data
+      );
     } catch (error) {
       console.error('[F1API] Failed to get circuit data:', error);
-      return { trackPoints: [], bounds: null, error: error instanceof Error ? error.message : 'Unknown error' };
+      return { 
+        trackPoints: [], 
+        bounds: null, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      };
     }
   }
 
   /**
-   * Health check for backend availability
+   * Health check
    */
   async healthCheck(): Promise<boolean> {
     try {
-      console.log('[F1API] Checking backend health...');
-      const response = await this.fetchWithRetry<any>(`${this.backendUrl}/health`);
-      const isHealthy = response.status === 'healthy';
-      console.log('[F1API] Backend health:', isHealthy ? 'OK' : 'DEGRADED');
-      return isHealthy;
+      const response = await this.fetchWithCache<any>(
+        `${this.backendUrl}/health`,
+        5000 // 5 seconds cache for health
+      );
+      return response.status === 'healthy' || response.status === 'degraded';
     } catch (error) {
-      console.error('[F1API] Backend health check failed:', error);
+      console.error('[F1API] Health check failed:', error);
       return false;
     }
   }
 
   /**
-   * Get current session or fall back to latest completed
+   * Get all sessions for a given year
    */
-  async getCurrentOrLatestSession(): Promise<{session: Session | null, message: string, is_live: boolean} | null> {
+  async getAllSessions(year: number): Promise<{sessions: Session[]}> {
     try {
-      console.log('[F1API] Getting current or latest session...');
-      return await this.fetchWithRetry<{session: Session | null, message: string, is_live: boolean}>(`${this.backendUrl}/api/sessions/current-or-latest`);
-    } catch (error) {
-      console.error('[F1API] Failed to get current or latest session:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Get all sessions for a year
-   */
-  async getAllSessions(year: number = new Date().getFullYear()): Promise<{sessions: Session[], total: number, year: number}> {
-    try {
-      console.log(`[F1API] Getting all sessions for year ${year}...`);
-      return await this.fetchWithRetry<{sessions: Session[], total: number, year: number}>(`${this.backendUrl}/api/sessions?year=${year}`);
+      return await this.fetchWithCache<{sessions: Session[]}>(
+        `${this.backendUrl}/api/sessions/year/${year}`,
+        300000 // 5 minutes cache for session list
+      );
     } catch (error) {
       console.error(`[F1API] Failed to get sessions for year ${year}:`, error);
-      return {sessions: [], total: 0, year};
+      return { sessions: [] };
     }
   }
 
   /**
-   * Get latest completed session
+   * Get cache statistics (for debugging)
    */
-  async getLatestCompletedSession(): Promise<{session: Session | null, message: string, is_live: boolean} | null> {
-    try {
-      console.log('[F1API] Getting latest completed session...');
-      return await this.fetchWithRetry<{session: Session | null, message: string, is_live: boolean}>(`${this.backendUrl}/api/sessions/latest-completed`);
-    } catch (error) {
-      console.error('[F1API] Failed to get latest completed session:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Simplified methods that don't exist in backend yet - fallback to empty data
-   */
-  async getLaps(sessionKey: string | number = DEFAULTS.SESSION_KEY, driverNumber?: number): Promise<LapData[]> {
-    console.log('[F1API] getLaps not implemented in backend, returning empty array');
-    return [];
-  }
-
-  async getMeetings(year: number = new Date().getFullYear()): Promise<Meeting[]> {
-    console.log('[F1API] getMeetings not implemented in backend, returning empty array');
-    return [];
-  }
-
-  async getSessions(meetingKey: string | number): Promise<Session[]> {
-    console.log('[F1API] getSessions not implemented in backend, returning empty array');
-    return [];
+  getCacheStats() {
+    const now = Date.now();
+    const validEntries = Array.from(this.cache.entries()).filter(
+      ([, value]) => now - value.timestamp < value.ttl
+    );
+    
+    return {
+      totalEntries: this.cache.size,
+      validEntries: validEntries.length,
+      activeRequests: this.requestQueue.size
+    };
   }
 }
 

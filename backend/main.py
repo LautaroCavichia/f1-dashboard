@@ -1,32 +1,29 @@
 """
-F1 Dashboard Backend - FastAPI Server with improved rate limiting
+Fixed F1 Dashboard Backend - Simplified and robust
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import asyncio
-import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Optional
 import uvicorn
 
 from src.services.f1_service import F1Service
-from src.websocket.websocket_handler import WebSocketManager
-from src.models.f1_models import SessionResponse, DriverResponse, LiveTimingResponse
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
     title="F1 Dashboard API",
-    description="Real-time Formula 1 telemetry data aggregation service",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    description="Formula 1 Live Data API",
+    version="2.0.0"
 )
 
 # Configure CORS
@@ -40,186 +37,28 @@ app.add_middleware(
 
 # Initialize services
 f1_service = F1Service()
-websocket_manager = WebSocketManager()
-
-# Global task for data streaming
-streaming_task: Optional[asyncio.Task] = None
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    logger.info("Starting F1 Dashboard API...")
+    logger.info("🏎️  Starting F1 Dashboard API...")
     await f1_service.initialize()
-    
-    # Start background data streaming with reduced frequency
-    global streaming_task
-    streaming_task = asyncio.create_task(data_streaming_loop())
-    
-    logger.info("F1 Dashboard API started successfully")
+    logger.info("✅ F1 Dashboard API started successfully")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    logger.info("Shutting down F1 Dashboard API...")
-    
-    # Cancel streaming task
-    if streaming_task:
-        streaming_task.cancel()
-        try:
-            await streaming_task
-        except asyncio.CancelledError:
-            pass
-    
-    await websocket_manager.disconnect_all()
+    logger.info("🛑 Shutting down F1 Dashboard API...")
     await f1_service.close()
-    logger.info("F1 Dashboard API shutdown complete")
+    logger.info("✅ F1 Dashboard API shutdown complete")
 
-async def data_streaming_loop():
-    """Background task for streaming live data with aggressive rate limiting"""
-    while True:
-        try:
-            if websocket_manager.has_connections():
-                # Get current session
-                session = await f1_service.get_current_session()
-                if session:
-                    session_key = session.get('session_key')
-                    
-                    # Check service health before making requests
-                    health = f1_service.get_health_status()
-                    if health['rate_limited']:
-                        logger.info("Service is rate limited, skipping this cycle")
-                        await asyncio.sleep(60)  # Wait longer when rate limited
-                        continue
-                    
-                    if health['consecutive_failures'] > 5:
-                        logger.warning(f"Too many failures ({health['consecutive_failures']}), reducing frequency")
-                        await asyncio.sleep(120)  # Wait 2 minutes after many failures
-                        continue
-                    
-                    try:
-                        # Only fetch the most essential data with long delays
-                        logger.info("Fetching positions...")
-                        positions = await f1_service.get_positions(session_key)
-                        
-                        if positions:
-                            await websocket_manager.broadcast({
-                                "type": "POSITION",
-                                "data": positions,
-                                "timestamp": datetime.utcnow().isoformat()
-                            })
-                        
-                        # Wait between requests to avoid rate limiting
-                        await asyncio.sleep(2)
-                        
-                        logger.info("Fetching intervals...")
-                        intervals = await f1_service.get_intervals(session_key)
-                        
-                        if intervals:
-                            await websocket_manager.broadcast({
-                                "type": "INTERVAL",
-                                "data": intervals,
-                                "timestamp": datetime.utcnow().isoformat()
-                            })
-                        
-                        # Only fetch locations occasionally to avoid rate limits
-                        await asyncio.sleep(2)
-                        
-                        logger.info("Fetching locations...")
-                        locations = await f1_service.get_locations(session_key)
-                        
-                        if locations:
-                            await websocket_manager.broadcast({
-                                "type": "LOCATION",
-                                "data": locations,
-                                "timestamp": datetime.utcnow().isoformat()
-                            })
-                    
-                    except Exception as api_error:
-                        logger.warning(f"API error in streaming loop: {api_error}")
-                        # Don't continue immediately, wait longer on errors
-                        await asyncio.sleep(30)
-                        continue
-            
-            # Much longer wait time to reduce API pressure - 30 seconds between cycles
-            logger.info("Waiting 30 seconds before next data fetch...")
-            await asyncio.sleep(30)
-            
-        except Exception as e:
-            logger.error(f"Error in data streaming loop: {e}")
-            await asyncio.sleep(60)  # Wait longer on error
-
-# WebSocket endpoint
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, session_key: Optional[str] = None):
-    """WebSocket endpoint for real-time data streaming"""
-    await websocket_manager.connect(websocket)
-    
-    try:
-        # Send initial session data
-        if session_key:
-            session = await f1_service.get_session_by_key(session_key)
-        else:
-            session = await f1_service.get_current_session()
-        
-        if session:
-            await websocket.send_json({
-                "type": "SESSION_INFO",
-                "data": session,
-                "timestamp": datetime.utcnow().isoformat()
-            })
-        else:
-            # Send a message indicating no session is available
-            await websocket.send_json({
-                "type": "NO_SESSION",
-                "data": {"message": "No active F1 session available"},
-                "timestamp": datetime.utcnow().isoformat()
-            })
-        
-        # Keep connection alive and handle messages
-        while True:
-            try:
-                # Wait for client messages with a timeout
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                message = json.loads(data)
-                
-                # Handle subscription requests
-                if message.get("type") == "SUBSCRIBE":
-                    logger.info(f"Client subscribed to: {message.get('data', {}).get('dataTypes', [])}")
-                elif message.get("type") == "UNSUBSCRIBE":
-                    logger.info(f"Client unsubscribed from: {message.get('data', {}).get('dataTypes', [])}")
-                elif message.get("type") == "PING":
-                    # Respond to ping
-                    await websocket.send_json({
-                        "type": "PONG",
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                
-            except asyncio.TimeoutError:
-                # Send heartbeat
-                await websocket.send_json({
-                    "type": "HEARTBEAT",
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-            except WebSocketDisconnect:
-                break
-            except Exception as e:
-                logger.error(f"WebSocket message error: {e}")
-                break
-                
-    except WebSocketDisconnect:
-        pass
-    finally:
-        websocket_manager.disconnect(websocket)
-
-# API Routes
 @app.get("/")
 async def root():
     """API health check"""
     health = f1_service.get_health_status()
     return {
-        "message": "F1 Dashboard API",
-        "version": "1.0.0",
-        "status": "running",
+        "message": "F1 Dashboard API v2.0",
+        "status": "healthy" if health['is_healthy'] else "degraded",
         "health": health,
         "timestamp": datetime.utcnow().isoformat()
     }
@@ -227,249 +66,268 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Detailed health check"""
-    try:
-        # Test OpenF1 API connection
-        session = await f1_service.get_current_session()
-        api_status = "healthy" if session else "degraded"
-    except Exception as e:
-        api_status = "unhealthy"
-        logger.error(f"Health check failed: {e}")
+    health = f1_service.get_health_status()
     
-    service_health = f1_service.get_health_status()
+    # Test API connection
+    try:
+        session = await f1_service.get_current_session()
+        api_status = "healthy" if session else "no_session"
+    except Exception:
+        api_status = "unhealthy"
     
     return {
-        "status": "healthy",
+        "status": "healthy" if health['is_healthy'] else "degraded",
         "api_connection": api_status,
-        "websocket_connections": websocket_manager.connection_count(),
-        "service_health": service_health,
+        "service_health": health,
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.get("/api/sessions/current")
-async def get_current_session():
-    """Get current F1 session information"""
+@app.get("/api/sessions/current-or-latest")
+async def get_current_or_latest_session():
+    """Get current live session or fallback to latest completed session"""
     try:
         session = await f1_service.get_current_session()
+        
         if not session:
-            # Instead of 404, return a message about no current session
             return {
-                "message": "No current F1 session available",
                 "session": None,
-                "timestamp": datetime.utcnow().isoformat()
+                "message": "No F1 sessions available",
+                "is_live": False
             }
-        return session
+        
+        # Check if session is live - fix timezone comparison
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        
+        # Parse dates and ensure they have timezone info
+        start_str = session['date_start']
+        end_str = session['date_end']
+        
+        # Handle different date formats from API
+        if start_str.endswith('Z'):
+            start_time = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+        elif '+' in start_str or start_str.endswith('00'):
+            start_time = datetime.fromisoformat(start_str)
+        else:
+            start_time = datetime.fromisoformat(start_str + '+00:00')
+            
+        if end_str.endswith('Z'):
+            end_time = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+        elif '+' in end_str or end_str.endswith('00'):
+            end_time = datetime.fromisoformat(end_str)
+        else:
+            end_time = datetime.fromisoformat(end_str + '+00:00')
+        
+        is_live = start_time <= now <= end_time
+        is_upcoming = start_time > now
+        is_completed = end_time < now
+        
+        if is_live:
+            message = "Current live session"
+        elif is_upcoming:
+            message = "Next upcoming session"
+        else:
+            message = "Latest completed session"
+        
+        return {
+            "session": session,
+            "message": message,
+            "is_live": is_live,
+            "is_upcoming": is_upcoming,
+            "is_completed": is_completed
+        }
+        
     except Exception as e:
-        logger.error(f"Error getting current session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting session: {e}")
+        return {
+            "session": None,
+            "message": f"Error retrieving session: {str(e)}",
+            "is_live": False
+        }
 
 @app.get("/api/sessions/{session_key}")
-async def get_session(session_key: str):
-    """Get specific session information"""
+async def get_session_by_key(session_key: str):
+    """Get specific session by key"""
     try:
-        session = await f1_service.get_session_by_key(session_key)
+        if session_key == "latest" or session_key == "current":
+            return await get_current_or_latest_session()
+        
+        # For specific session keys, we'll need to implement this
+        # For now, fallback to current session
+        session = await f1_service.get_current_session()
+        
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        
         return session
+        
     except Exception as e:
         logger.error(f"Error getting session {session_key}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/drivers/{session_key}")
 async def get_drivers(session_key: str):
-    """Get drivers for a specific session"""
+    """Get drivers for a session"""
     try:
+        # Handle 'latest' session key
+        if session_key == "latest":
+            session = await f1_service.get_current_session()
+            if not session:
+                return {"drivers": []}
+            session_key = str(session['session_key'])
+        
         drivers = await f1_service.get_drivers(session_key)
         return {"drivers": drivers}
+        
     except Exception as e:
-        logger.error(f"Error getting drivers for session {session_key}: {e}")
+        logger.error(f"Error getting drivers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/live-timing/{session_key}")
 async def get_live_timing(session_key: str):
     """Get comprehensive live timing data"""
     try:
-        timing_data = await f1_service.get_live_timing_data(session_key)
+        # Handle 'latest' session key
+        if session_key == "latest":
+            session = await f1_service.get_current_session()
+            if not session:
+                return {
+                    "driverTimings": [],
+                    "error": "No current session available"
+                }
+            session_key = str(session['session_key'])
+        
+        timing_data = await f1_service.get_comprehensive_timing_data(session_key)
         return timing_data
+        
     except Exception as e:
-        logger.error(f"Error getting live timing for session {session_key}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/telemetry/{session_key}")
-async def get_telemetry(session_key: str, driver_number: Optional[int] = None):
-    """Get telemetry data for session"""
-    try:
-        car_data = await f1_service.get_car_data(session_key, driver_number)
-        return {"telemetry": car_data}
-    except Exception as e:
-        logger.error(f"Error getting telemetry for session {session_key}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting live timing: {e}")
+        return {
+            "driverTimings": [],
+            "error": str(e)
+        }
 
 @app.get("/api/positions/{session_key}")
 async def get_positions(session_key: str):
-    """Get current driver positions"""
+    """Get current positions"""
     try:
+        if session_key == "latest":
+            session = await f1_service.get_current_session()
+            if not session:
+                return {"positions": []}
+            session_key = str(session['session_key'])
+        
         positions = await f1_service.get_positions(session_key)
         return {"positions": positions}
+        
     except Exception as e:
-        logger.error(f"Error getting positions for session {session_key}: {e}")
+        logger.error(f"Error getting positions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/locations/{session_key}")
 async def get_locations(session_key: str):
-    """Get car locations on track"""
+    """Get car locations"""
     try:
+        if session_key == "latest":
+            session = await f1_service.get_current_session()
+            if not session:
+                return {"locations": []}
+            session_key = str(session['session_key'])
+        
         locations = await f1_service.get_locations(session_key)
         return {"locations": locations}
+        
     except Exception as e:
-        logger.error(f"Error getting locations for session {session_key}: {e}")
+        logger.error(f"Error getting locations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/circuit/{session_key}")
-async def get_circuit_data(session_key: str):
-    """Get circuit track data for visualization"""
+@app.get("/api/telemetry/{session_key}")
+async def get_telemetry(session_key: str, driver_number: Optional[int] = None):
+    """Get telemetry data"""
     try:
-        circuit_data = await f1_service.get_circuit_data(session_key)
-        return circuit_data
+        if session_key == "latest":
+            session = await f1_service.get_current_session()
+            if not session:
+                return {"telemetry": []}
+            session_key = str(session['session_key'])
+        
+        car_data = await f1_service.get_car_data(session_key, driver_number)
+        return {"telemetry": car_data}
+        
     except Exception as e:
-        logger.error(f"Error getting circuit data for session {session_key}: {e}")
+        logger.error(f"Error getting telemetry: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/pit-stops/{session_key}")
 async def get_pit_stops(session_key: str):
-    """Get pit stop information"""
+    """Get pit stop data"""
     try:
+        if session_key == "latest":
+            session = await f1_service.get_current_session()
+            if not session:
+                return {"pit_stops": [], "stints": []}
+            session_key = str(session['session_key'])
+        
         pit_data = await f1_service.get_pit_data(session_key)
         stints = await f1_service.get_stints(session_key)
+        
         return {
             "pit_stops": pit_data,
             "stints": stints
         }
+        
     except Exception as e:
-        logger.error(f"Error getting pit stops for session {session_key}: {e}")
+        logger.error(f"Error getting pit stops: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/weather/{session_key}")
-async def get_weather(session_key: str):
-    """Get weather information"""
+@app.get("/api/circuit/{session_key}")
+async def get_circuit_data(session_key: str):
+    """Get circuit visualization data"""
     try:
-        weather = await f1_service.get_weather(session_key)
-        return {"weather": weather}
-    except Exception as e:
-        logger.error(f"Error getting weather for session {session_key}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@app.get("/api/sessions")
-async def get_all_sessions(year: int = None):
-    """Get all sessions, optionally filtered by year"""
-    try:
-        if year is None:
-            year = datetime.now().year
-            
-        # Get meetings for the year
-        meetings = await f1_service._make_request("meetings", {"year": year})
+        if session_key == "latest":
+            session = await f1_service.get_current_session()
+            if not session:
+                return {"trackPoints": [], "bounds": None}
+            session_key = str(session['session_key'])
         
-        all_sessions = []
-        for meeting in meetings:
-            meeting_key = meeting.get('meeting_key')
-            if meeting_key:
-                # Get sessions for this meeting
-                sessions = await f1_service._make_request("sessions", {"meeting_key": meeting_key})
-                for session in sessions:
-                    session['meeting_name'] = meeting.get('meeting_name', '')
-                    session['circuit_short_name'] = meeting.get('circuit_short_name', '')
-                    session['location'] = meeting.get('location', '')
-                    session['country_name'] = meeting.get('country_name', '')
-                    all_sessions.append(session)
+        locations = await f1_service.get_locations(session_key)
         
-        # Sort by date (newest first)
-        all_sessions.sort(key=lambda x: x.get('date_start', ''), reverse=True)
+        # Process locations into track points
+        track_points = []
+        seen_points = set()
         
-        return {
-            "sessions": all_sessions,
-            "total": len(all_sessions),
-            "year": year
-        }
-    except Exception as e:
-        logger.error(f"Error getting sessions for year {year}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/sessions/latest-completed")
-async def get_latest_completed_session():
-    """Get the most recent completed session"""
-    try:
-        # Get current year sessions
-        current_year = datetime.now().year
-        year_response = await get_all_sessions(current_year)
-        sessions = year_response["sessions"]
+        for location in locations:
+            x, y = location.get('x'), location.get('y')
+            if x is not None and y is not None:
+                point = (round(x, 1), round(y, 1))  # Round to reduce duplicates
+                if point not in seen_points:
+                    track_points.append({'x': x, 'y': y})
+                    seen_points.add(point)
         
-        if not sessions:
-            # Try previous year if no sessions this year
-            prev_year_response = await get_all_sessions(current_year - 1)
-            sessions = prev_year_response["sessions"]
-        
-        # Find the most recent completed session
-        now = datetime.utcnow()
-        completed_sessions = [
-            s for s in sessions 
-            if datetime.fromisoformat(s['date_end'].replace('Z', '+00:00')) < now
-        ]
-        
-        if completed_sessions:
-            latest = completed_sessions[0]  # Already sorted by date desc
-            return {
-                "session": latest,
-                "message": "Latest completed session",
-                "is_live": False
+        # Calculate bounds
+        bounds = None
+        if track_points:
+            x_coords = [p['x'] for p in track_points]
+            y_coords = [p['y'] for p in track_points]
+            bounds = {
+                'minX': min(x_coords),
+                'maxX': max(x_coords),
+                'minY': min(y_coords),
+                'maxY': max(y_coords)
             }
-        else:
-            # If no completed sessions, return the most recent one anyway
-            if sessions:
-                return {
-                    "session": sessions[0],
-                    "message": "Most recent session (may be upcoming)",
-                    "is_live": False
-                }
-            else:
-                raise HTTPException(status_code=404, detail="No sessions found")
-                
-    except Exception as e:
-        logger.error(f"Error getting latest completed session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/sessions/current-or-latest")
-async def get_current_or_latest_session():
-    """Get current live session, or fall back to latest completed session"""
-    try:
-        # First try to get current live session
-        try:
-            sessions = await f1_service._make_request("sessions", {"session_key": "latest"})
-            if sessions:
-                current_session = sessions[0]
-                
-                # Check if it's actually live
-                now = datetime.utcnow()
-                start_time = datetime.fromisoformat(current_session['date_start'].replace('Z', '+00:00'))
-                end_time = datetime.fromisoformat(current_session['date_end'].replace('Z', '+00:00'))
-                
-                is_live = start_time <= now <= end_time
-                
-                return {
-                    "session": current_session,
-                    "message": "Current live session" if is_live else "Most recent session",
-                    "is_live": is_live
-                }
-        except:
-            pass
         
-        # Fall back to latest completed session
-        return await get_latest_completed_session()
-        
-    except Exception as e:
-        logger.error(f"Error getting current or latest session: {e}")
         return {
-            "session": None,
-            "message": f"No sessions available: {str(e)}",
-            "is_live": False
+            "trackPoints": track_points,
+            "bounds": bounds,
+            "pointCount": len(track_points)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting circuit data: {e}")
+        return {
+            "trackPoints": [],
+            "bounds": None,
+            "error": str(e)
         }
 
 if __name__ == "__main__":
@@ -477,6 +335,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=False,
         log_level="info"
     )
